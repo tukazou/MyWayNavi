@@ -216,3 +216,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# 環境変数
+.env
+
+# Google Cloudサービスアカウントキー
+*.json
