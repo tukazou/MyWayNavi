@@ -226,3 +226,8 @@ __marimo__/
 # 環境変数ファイルはGitHubにあげない
 .env
 
+# 不要なプラットフォームのフォルダをGitの対象外にする
+/macos/
+/linux/
+/web/
+/windows/
