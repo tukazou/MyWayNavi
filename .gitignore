@@ -222,3 +222,7 @@ __marimo__/
 
 # Google Cloudサービスアカウントキー
 *.json
+
+# 環境変数ファイルはGitHubにあげない
+.env
+
