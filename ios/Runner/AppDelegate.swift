@@ -9,9 +9,12 @@ import GoogleMaps
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
     
-    // 👇 【追加】 .env ファイルからAPIキーを読み込む処理
+    // 👇 ルートの .env（flutter_assets経由でバンドルされたもの）からAPIキーを読み込む処理
+    // ios/.env のような別管理ファイルは使わず、Flutter側（flutter_dotenv）と同じ
+    // .env を単一のソースとして読む。
     var apiKey = ""
-    if let envPath = Bundle.main.path(forResource: ".env", ofType: nil) {
+    let envAssetKey = FlutterDartProject.lookupKey(forAsset: ".env")
+    if let envPath = Bundle.main.path(forResource: envAssetKey, ofType: nil) {
         do {
             let envContent = try String(contentsOfFile: envPath, encoding: .utf8)
             let lines = envContent.components(separatedBy: .newlines)
