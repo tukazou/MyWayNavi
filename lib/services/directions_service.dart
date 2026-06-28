@@ -7,7 +7,24 @@ import '../utils/polyline_decoder.dart';
 
 class DirectionsResult {
   final List<LatLng> points;
-  const DirectionsResult(this.points);
+  final int durationSeconds;
+  final int distanceMeters;
+
+  const DirectionsResult({
+    required this.points,
+    required this.durationSeconds,
+    required this.distanceMeters,
+  });
+
+  int get durationMinutes => (durationSeconds / 60).round();
+  double get distanceKm => distanceMeters / 1000;
+}
+
+class RouteOptions {
+  final DirectionsResult routeA;
+  final DirectionsResult? routeB;
+
+  const RouteOptions({required this.routeA, this.routeB});
 }
 
 class DirectionsException implements Exception {
@@ -23,6 +40,7 @@ class DirectionsService {
     required LatLng origin,
     required String destination,
     String mode = 'driving',
+    bool avoidHighways = false,
   }) async {
     final apiKey = dotenv.env['GOOGLE_MAPS_API_KEY'];
     final originParam = '${origin.latitude},${origin.longitude}';
@@ -32,6 +50,7 @@ class DirectionsService {
         '?origin=$originParam'
         '&destination=$destinationParam'
         '&mode=$mode'
+        '${avoidHighways ? '&avoid=highways' : ''}'
         '&key=$apiKey';
 
     final response = await http.get(Uri.parse(url));
@@ -47,8 +66,40 @@ class DirectionsService {
       throw const DirectionsException('ルートが見つかりませんでした');
     }
 
-    final encodedPolyline = routes[0]['overview_polyline']['points'];
+    final route = routes[0];
+    final encodedPolyline = route['overview_polyline']['points'];
     final decodedPoints = polylineToLatLng(decodePolyline(encodedPolyline));
-    return DirectionsResult(decodedPoints);
+
+    final leg = route['legs'][0];
+    final durationSeconds = leg['duration']['value'] as int;
+    final distanceMeters = leg['distance']['value'] as int;
+
+    return DirectionsResult(
+      points: decodedPoints,
+      durationSeconds: durationSeconds,
+      distanceMeters: distanceMeters,
+    );
+  }
+
+  /// 高速優先（ルートA）と下道優先（ルートB）の2案を取得する。
+  /// ルートBが取得できない場合（高速なしルートが存在しない等）はnullになる。
+  Future<RouteOptions> fetchRouteOptions({
+    required LatLng origin,
+    required String destination,
+  }) async {
+    final routeA = await fetchRoute(origin: origin, destination: destination);
+
+    DirectionsResult? routeB;
+    try {
+      routeB = await fetchRoute(
+        origin: origin,
+        destination: destination,
+        avoidHighways: true,
+      );
+    } catch (e) {
+      routeB = null;
+    }
+
+    return RouteOptions(routeA: routeA, routeB: routeB);
   }
 }
