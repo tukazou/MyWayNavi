@@ -7,6 +7,14 @@ import 'package:http/http.dart' as http;
 // 503が落ち着いたら 'gemini-3.5-flash' に戻すこと。
 const String geminiModel = 'gemini-3.1-flash-lite';
 
+// false: Flutterから直接Gemini APIを呼ぶ（開発用）
+// true: 自前のバックエンド（Cloud Run上のFastAPI /chat）経由で呼ぶ（デモ・提出用）
+const bool useBackend = true;
+
+// Cloud RunにデプロイしたバックエンドのURL
+const String backendBaseUrl =
+    'https://mywaynavi-backend-698507727621.asia-northeast1.run.app';
+
 class GeminiException implements Exception {
   final String message;
   const GeminiException(this.message);
@@ -109,19 +117,25 @@ class _ChatTurn {
   final String text;
   const _ChatTurn(this.role, this.text);
 
-  Map<String, dynamic> toJson() => {
+  Map<String, dynamic> toGeminiJson() => {
         'role': role,
         'parts': [
           {'text': text}
         ],
       };
+
+  Map<String, dynamic> toBackendJson() => {
+        'role': role,
+        'text': text,
+      };
 }
 
 class GeminiService {
   static const _maxRetries = 3;
-  static final Uri _endpoint = Uri.parse(
+  static final Uri _directEndpoint = Uri.parse(
     'https://generativelanguage.googleapis.com/v1beta/models/$geminiModel:generateContent',
   );
+  static final Uri _backendChatEndpoint = Uri.parse('$backendBaseUrl/chat');
 
   final List<_ChatTurn> _history = [];
 
@@ -130,6 +144,17 @@ class GeminiService {
   }
 
   Future<String> sendMessage(String text) async {
+    final replyText = useBackend
+        ? await _sendViaBackend(text)
+        : await _sendDirectToGemini(text);
+
+    _history.add(_ChatTurn('user', text));
+    _history.add(_ChatTurn('model', replyText));
+
+    return replyText;
+  }
+
+  Future<String> _sendDirectToGemini(String text) async {
     final apiKey = dotenv.env['GEMINI_API_KEY'];
     if (apiKey == null || apiKey.isEmpty) {
       throw const GeminiException('GEMINI_API_KEYが設定されていません');
@@ -142,10 +167,19 @@ class GeminiService {
           {'text': _systemPrompt}
         ]
       },
-      'contents': turnsForRequest.map((t) => t.toJson()).toList(),
+      'contents': turnsForRequest.map((t) => t.toGeminiJson()).toList(),
     });
 
-    final response = await _postWithRetry(apiKey, body);
+    final response = await _postWithRetry(
+      () => http.post(
+        _directEndpoint,
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: body,
+      ),
+    );
 
     final data = json.decode(response.body);
     final candidates = data['candidates'] as List?;
@@ -158,28 +192,41 @@ class GeminiService {
       throw const GeminiException('Geminiの応答形式が不正です');
     }
 
-    final replyText = parts[0]['text'] as String;
-
-    _history.add(_ChatTurn('user', text));
-    _history.add(_ChatTurn('model', replyText));
-
-    return replyText;
+    return parts[0]['text'] as String;
   }
 
-  Future<http.Response> _postWithRetry(String apiKey, String body) async {
+  Future<String> _sendViaBackend(String text) async {
+    final body = json.encode({
+      'message': text,
+      'history': _history.map((t) => t.toBackendJson()).toList(),
+    });
+
+    final response = await _postWithRetry(
+      () => http.post(
+        _backendChatEndpoint,
+        headers: {'Content-Type': 'application/json'},
+        body: body,
+      ),
+    );
+
+    final data = json.decode(response.body);
+    final reply = data['reply'];
+    if (reply == null || reply is! String || reply.isEmpty) {
+      throw const GeminiException('バックエンドからの応答が不正です');
+    }
+
+    return reply;
+  }
+
+  Future<http.Response> _postWithRetry(
+    Future<http.Response> Function() request,
+  ) async {
     for (int attempt = 0; attempt <= _maxRetries; attempt++) {
       http.Response response;
       try {
-        response = await http.post(
-          _endpoint,
-          headers: {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': apiKey,
-          },
-          body: body,
-        );
+        response = await request();
       } catch (e) {
-        throw const GeminiException('Geminiへの通信に失敗しました');
+        throw const GeminiException('通信に失敗しました');
       }
 
       final isRetryable =
@@ -187,7 +234,7 @@ class GeminiService {
       if (!isRetryable) {
         if (response.statusCode != 200) {
           throw GeminiException(
-            'Gemini APIエラー（status: ${response.statusCode}）',
+            'エラーが発生しました（status: ${response.statusCode}）',
           );
         }
         return response;

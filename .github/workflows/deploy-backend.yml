@@ -1,0 +1,62 @@
+name: Deploy backend to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+
+# このワークフローを動かす前に、以下をGitHub Secretsに登録する必要があります
+# （Settings > Secrets and variables > Actions）:
+#
+#   GCP_PROJECT_ID   : GCPプロジェクトID
+#   GCP_REGION       : Cloud Runのリージョン（例: asia-northeast1）
+#   GCP_SA_KEY       : デプロイ用サービスアカウントの鍵（JSON）。
+#                      Workload Identity連携を使う場合はこのSecretは不要で、
+#                      代わりに google-github-actions/auth を
+#                      workload_identity_provider 方式に変更してください。
+#   CLOUD_RUN_SERVICE: Cloud Runのサービス名（例: mywaynavi-backend）
+#   ARTIFACT_REPO    : Artifact Registryのリポジトリ名
+#
+# Gemini APIキー（GEMINI_API_KEY）はこのワークフローには含めません。
+# Cloud Run側でSecret Manager経由の環境変数として設定してください
+# （gcloud run deploy --set-secrets= 等）。GitHub Actionsのログや
+# リポジトリにAPIキーが残らないようにするためです。
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: "${{ secrets.GCP_SA_KEY }}"
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev
+
+      - name: Build image
+        run: |
+          IMAGE="${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.ARTIFACT_REPO }}/${{ secrets.CLOUD_RUN_SERVICE }}:${{ github.sha }}"
+          docker build -t "$IMAGE" backend/
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Push image
+        run: docker push "$IMAGE"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ secrets.CLOUD_RUN_SERVICE }} \
+            --image "$IMAGE" \
+            --region ${{ secrets.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated

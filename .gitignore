@@ -23,8 +23,15 @@ pubspec.lock
 # 環境変数
 .env
 .env.*
+!.env.example
 
 # Google Cloud サービスアカウントキー（JSON全部ではなく鍵だけ除外）
 *-key.json
 service-account*.json
 gcp-*.json
+
+# Python (backend/)
+__pycache__/
+*.pyc
+.venv/
+venv/
