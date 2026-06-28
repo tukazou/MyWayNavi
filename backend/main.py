@@ -6,6 +6,27 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# Routes API（computeRoutes）用。Directions API（Flutter直のルート検索）とは別エンドポイント。
+# 同じMaps PlatformのAPIキーで動くが、GCPプロジェクト側で「Routes API」を
+# 個別に有効化しておく必要がある。
+GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+ROUTES_API_ENDPOINT = "https://routes.googleapis.com/directions/v2:computeRoutes"
+ROUTES_FIELD_MASK = (
+    "routes.duration,routes.staticDuration,routes.distanceMeters,"
+    "routes.polyline.encodedPolyline"
+)
+
+# /reroute のデモ用固定値（Issue 5 技術仕様書 v0.2 第4章）
+MISATO_JCT_TRIGGER = {"lat": 35.776511, "lng": 139.888695}
+MISATO_NAGAREYAMA_BRIDGE_VIA = {"lat": 35.8652896, "lng": 139.898173}
+MOVIX_KASHIWANOHA = {"lat": 35.8933745, "lng": 139.9518514}
+
+# fallback用ポリライン（/rerouteのlive成功時のレスポンスから実値を採取済み）
+FALLBACK_STAY_POLYLINE = r'arjyEa_ytYhXmS|`@aZrK{I|CwCdCiClA{AhA_BrFwI~@kBdB{Dj@uApDsKh@kBlCqL`D}OfAcG`@sBn@qDhAyE`A_C`AgBx@mAlAqAf@c@pBoAfBu@`Bc@jCc@zTuBLSxASrHu@~DO^@DBxLy@J^iF\KTyB^cUlBECGQkL~@{D`@iEn@{Cv@cBx@aBvAw@x@s@~@iAhBgAlC_ArDiBbJsDrRwAzGaDzLaA|CgDrIaAzBqA`CqBlDoAnB_CxCgAzA_@d@aMlLw\pVo`@zY}QdNeRfNuFtDsF`D}FrCuF|BsFjB}F|AaGnAeG~@iFl@mr@vFaGt@_KfBaOpCgHdAmNtAuYnCsJjAoF|@yFjAuElAqBl@_EzAuAf@mEvByDxByE|CgEdDyChCyAtAeFpFiGjH{DzEiC|CmB~BAVkFjHW^IXyAfBa@p@Uj@]dBSfDIn@Wr@_@h@a@Zc@Nc@Dg@Co@S_@W]e@Wq@S_Ac@aD[_AeHwLECgDoGmCyFe@kA?WgCuF_DoGmBcD_ByBeCqCgD_DgG_FwG}EcHqEeIwEgMiGwH_DmI{C_WgI{EgB{IoDiCcA}Ai@oEkA_Bg@mAk@oAs@kA{@oDgD}@u@oFsDaEaDaDwCgCkCyBiC_CcDuCuE{CyFKYiCaGqCiHaHkReFkMqEgKaDyGuCoF}DsGyCkEiBaC{GkI{EeFoCkCeXcV{EuEuHuHeJeKeK{LsNcRcFuGyDkEmJoJoNiMwEuEY?WSkBgBy@e@s@Qq@CiBHk@Eg@O][Sg@Gi@@i@Ly@Zy@~AiDv@yBf@}AFk@AOrAcGh@mCDeACgAScAa@aAg@o@k@c@w@Yo@G_@Da@RYZMj@@f@FVRVXLZ?^Oh@s@`AiBN[LGpFiOrA_EbIqT~AsDjBmDxBkDjBeCRW|A~@jB|@pA`@`ARL?bBh@~@P`Kx@nBDbCEtLoAQuD@oAVyC?[L_ALIfATHNARCL'
+FALLBACK_DETOUR_POLYLINE = r'arjyEa_ytYhXmS|`@aZrK{I|CwCdCiClA{AhA_BrFwI~@kBdB{Dj@uApDsKh@kBlCqL`D}OfAcG`@sBn@qDhAyE`A_C`AgBx@mAlAqAf@c@pBoAfBu@`Bc@jCc@zTuBLSxASrHu@~DO^@DBxLy@J^iF\KTyB^cUlBECGQkL~@{D`@iEn@{Cv@cBx@aBvAw@x@s@~@iAhBgAlC_ArDiBbJsDrRwAzGaDzLaA|CgDrIaAzBqA`CqBlDoAnB_CxCgAzA_@d@aMlLw\pVo`@zY}QdNeRfNuFtDsF`D}FrCuF|BsFjB}F|AaGnAeG~@iFl@mr@vFaGt@_KfBaOpCgHdAmNtAuYnCsJjAoF|@yFjAuElAqBl@_EzAuAf@mEvByDxByE|CgEdDyChCyAtAeFpFiGjH{DzEiC|CmB~BAVkFjHW^IXyAfBa@p@Uj@]dBSfDIn@Wr@_@h@a@Zc@Nc@Dg@Co@S_@W]e@Wq@S_Ac@aD[_AeHwLECgDoGmCyFe@kA?WgCuF_DoGmBcD_ByBeCqCgD_DgG_FwG}EcHqEeIwEgMiGwH_DmI{C_WgI{EgB{IoDiCcA_@DyA_@wB[g@Eg@DsA^c@C_@Ww@u@u@a@GKu@[[]_@_AeBeCQSp@cBPk@?Sx@DvBRvBGV@hAMfAYx@e@j@i@b@e@h@W|Bg@OaC{@oIaBmPc@qAe@{EBwAmB{QsAaNqBwQk@oDw@aDmAqDgAiCoCcFy@iB]}@MQKWKUo@}AiBiFYu@Q]_BoEI[uAsCm@aA[]uAaA_@a@q@gA_EsHsAkCi@cASs@UeAKWI}@C{Ad@sS@mBPsHGoAUsA_@cAe@y@aAmAwDeEaBuBiBwCgAwBuAcDkA_Ee@oBiAkGw@}E]aAk@gAi@q@{@_A_AoA{A{C}FqJi@}@oAmCyFmOoKaZoA}DKIcAgCkDqJ_BkDwAgCwAqBiAoA{AiAaBy@{Ac@y@OmAMsAAaBHiOzAaBL]FSoE@oAVyC?[L_ALIfATHNARCL'
+FALLBACK_STAY_ETA_MIN = 53
+FALLBACK_DETOUR_ETA_MIN = 40
+
 # 現在 gemini-3.5-flash がGoogle側の高負荷で503を返すことがあるため、
 # 一時的に gemini-3.1-flash-lite をデフォルトにしている。
 # 503が落ち着いたら GEMINI_MODEL=gemini-3.5-flash に戻すこと
@@ -148,6 +169,46 @@ class ChatResponse(BaseModel):
     reply: str
 
 
+class LatLng(BaseModel):
+    lat: float
+    lng: float
+
+
+class CongestionEvent(BaseModel):
+    id: str
+    location_label: str
+    length_km: float
+    injected_delay_min: int
+    note: str = ""
+
+
+class RerouteRequest(BaseModel):
+    current_location: LatLng
+    destination: str
+    congestion_event: CongestionEvent
+    conversation_history: list[ChatTurn] = []
+
+
+class EtaBreakdown(BaseModel):
+    api_static_min: int
+    injected_delay_min: int
+
+
+class RouteOption(BaseModel):
+    id: str
+    label: str
+    polyline: str
+    eta_min: int
+    eta_breakdown: EtaBreakdown
+
+
+class RerouteResponse(BaseModel):
+    reply: str
+    action: str = "show_reroute"
+    routes: list[RouteOption]
+    source: str
+
+
 def _turn_to_gemini_part(turn: ChatTurn) -> dict:
     return {"role": turn.role, "parts": [{"text": turn.text}]}
 
@@ -192,6 +253,98 @@ async def _call_gemini_with_retry(contents: list[dict]) -> dict:
     raise HTTPException(status_code=503, detail="ただいま混み合っているようです。少し待ってもう一度お試しください")
 
 
+class RoutesApiError(Exception):
+    """Routes APIの呼び出し失敗・期待形チェックNGを表す（/rerouteのfallback判定に使う）"""
+
+
+async def _compute_route(
+    origin: LatLng,
+    destination: LatLng,
+    via: LatLng | None = None,
+) -> tuple[int, str]:
+    """Routes API(computeRoutes)を呼び、(staticDuration秒, encodedPolyline)を返す。
+    エラー・タイムアウト・routes空はRoutesApiErrorに正規化する。"""
+    if not GOOGLE_MAPS_API_KEY:
+        raise RoutesApiError("GOOGLE_MAPS_API_KEYが設定されていません")
+
+    body: dict = {
+        "origin": {"location": {"latLng": {"latitude": origin.lat, "longitude": origin.lng}}},
+        "destination": {
+            "location": {"latLng": {"latitude": destination.lat, "longitude": destination.lng}}
+        },
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_UNAWARE",
+        "polylineEncoding": "ENCODED_POLYLINE",
+    }
+    if via is not None:
+        body["intermediates"] = [
+            {"location": {"latLng": {"latitude": via.lat, "longitude": via.lng}}, "via": True}
+        ]
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+        "X-Goog-FieldMask": ROUTES_FIELD_MASK,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(ROUTES_API_ENDPOINT, headers=headers, json=body)
+    except httpx.RequestError as e:
+        raise RoutesApiError(f"Routes APIへの通信に失敗しました: {e}")
+
+    if response.status_code != 200:
+        raise RoutesApiError(f"Routes APIエラー（status: {response.status_code}）")
+
+    data = response.json()
+    routes = data.get("routes") or []
+    if not routes:
+        raise RoutesApiError("Routes APIがルートを返しませんでした")
+
+    route = routes[0]
+    duration_seconds = int(route.get("staticDuration", "0s").rstrip("s"))
+    polyline = (route.get("polyline") or {}).get("encodedPolyline", "")
+    if not polyline:
+        raise RoutesApiError("Routes APIがpolylineを返しませんでした")
+
+    return duration_seconds, polyline
+
+
+def _build_congestion_prompt(
+    event: CongestionEvent,
+    route_stay_eta_min: int,
+    route_detour_eta_min: int,
+    injected_delay_min: int,
+) -> str:
+    diff = route_detour_eta_min - (route_stay_eta_min - injected_delay_min)
+    return (
+        "[渋滞情報]\n"
+        f"- 渋滞地点：{event.location_label}\n"
+        f"- 渋滞の長さ：約{event.length_km}km\n"
+        f"- 通過予測：約{injected_delay_min}分、{event.note}\n"
+        f"- ルート1（並ぶ）：このまま常磐道。早いが渋滞に停まる。到着{route_stay_eta_min}分後\n"
+        f"- ルート2（迂回）：三郷中央ICで降りて三郷流山橋経由、流山ICで再流入。"
+        f"到着{route_detour_eta_min}分後（約{diff:+d}分）だが停まらずスムーズ\n"
+        "上記を運転者に簡潔に説明し、「並ぶ／迂回」のどちらにするか尋ねてください。判断は委ねること。"
+    )
+
+
+def _fixed_congestion_reply(
+    event: CongestionEvent, route_stay_eta_min: int, route_detour_eta_min: int
+) -> str:
+    # 実際にlive応答した文面（source: "live"）の言い回しを踏襲した固定文。
+    # fallback分岐ではGeminiを呼ばないため、数値以外はここで完全に固定する。
+    return (
+        f"{event.location_label}で約{event.length_km}kmほどの渋滞が発生しており、"
+        f"通過に{event.injected_delay_min}分ほどかかる見込みです（{event.note}）。\n"
+        f"このまま進むと{route_stay_eta_min}分後の到着になりますが、"
+        "並ばず動ける迂回ルートもあります。\n"
+        "三郷中央ICで一度降りて流山ICから再流入するルートなら、"
+        f"距離は少し増えますが{route_detour_eta_min}分で到着できそうです。\n"
+        "並ぶか迂回するか、どうしますか？"
+    )
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok"}
@@ -213,3 +366,96 @@ async def chat(req: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=502, detail="Geminiの応答形式が不正です")
 
     return ChatResponse(reply=parts[0]["text"])
+
+
+@app.post("/reroute", response_model=RerouteResponse)
+async def reroute(req: RerouteRequest) -> RerouteResponse:
+    event = req.congestion_event
+    destination_point = LatLng(lat=MOVIX_KASHIWANOHA["lat"], lng=MOVIX_KASHIWANOHA["lng"])
+    via_point = LatLng(
+        lat=MISATO_NAGAREYAMA_BRIDGE_VIA["lat"], lng=MISATO_NAGAREYAMA_BRIDGE_VIA["lng"]
+    )
+
+    try:
+        t1_seconds, route1_polyline = await _compute_route(
+            req.current_location, destination_point
+        )
+        t2_seconds, route2_polyline = await _compute_route(
+            req.current_location, destination_point, via=via_point
+        )
+
+        t1_min = -(-t1_seconds // 60)  # 秒→分（切り上げ）
+        t2_min = -(-t2_seconds // 60)
+
+        # 期待形チェック：viaが効いておらず直進とほぼ同形の疑い（差が3分未満）
+        if (t2_min - t1_min) < 3:
+            raise RoutesApiError("ルート2が迂回になっていない疑いがあるためfallback")
+
+        route_stay_eta_min = t1_min + event.injected_delay_min
+        route_detour_eta_min = t2_min
+
+        prompt = _build_congestion_prompt(
+            event, route_stay_eta_min, route_detour_eta_min, event.injected_delay_min
+        )
+        contents = [_turn_to_gemini_part(t) for t in req.conversation_history]
+        contents.append({"role": "user", "parts": [{"text": prompt}]})
+        gemini_data = await _call_gemini_with_retry(contents)
+
+        candidates = gemini_data.get("candidates") or []
+        parts = (candidates[0].get("content") or {}).get("parts") or [] if candidates else []
+        reply = parts[0]["text"] if parts and parts[0].get("text") else None
+        if not reply:
+            raise RoutesApiError("Geminiから応答が得られなかったためfallback")
+
+        return RerouteResponse(
+            reply=reply,
+            routes=[
+                RouteOption(
+                    id="route_stay",
+                    label="並ぶ（このまま常磐道）",
+                    polyline=route1_polyline,
+                    eta_min=route_stay_eta_min,
+                    eta_breakdown=EtaBreakdown(
+                        api_static_min=t1_min, injected_delay_min=event.injected_delay_min
+                    ),
+                ),
+                RouteOption(
+                    id="route_detour",
+                    label="迂回（三郷中央IC→三郷流山橋→流山IC）",
+                    polyline=route2_polyline,
+                    eta_min=route_detour_eta_min,
+                    eta_breakdown=EtaBreakdown(api_static_min=t2_min, injected_delay_min=0),
+                ),
+            ],
+            source="live",
+        )
+    except RoutesApiError:
+        # fallback：Gemini呼び出しも行わず固定値・固定文で即応答する
+        reply = _fixed_congestion_reply(
+            event, FALLBACK_STAY_ETA_MIN, FALLBACK_DETOUR_ETA_MIN
+        )
+        return RerouteResponse(
+            reply=reply,
+            routes=[
+                RouteOption(
+                    id="route_stay",
+                    label="並ぶ（このまま常磐道）",
+                    polyline=FALLBACK_STAY_POLYLINE,
+                    eta_min=FALLBACK_STAY_ETA_MIN,
+                    eta_breakdown=EtaBreakdown(
+                        api_static_min=FALLBACK_STAY_ETA_MIN - event.injected_delay_min,
+                        injected_delay_min=event.injected_delay_min,
+                    ),
+                ),
+                RouteOption(
+                    id="route_detour",
+                    label="迂回（三郷中央IC→三郷流山橋→流山IC）",
+                    polyline=FALLBACK_DETOUR_POLYLINE,
+                    eta_min=FALLBACK_DETOUR_ETA_MIN,
+                    eta_breakdown=EtaBreakdown(
+                        api_static_min=FALLBACK_DETOUR_ETA_MIN, injected_delay_min=0
+                    ),
+                ),
+            ],
+            source="fallback",
+        )
